@@ -1,15 +1,14 @@
 import * as vscode from "vscode";
 import { watch } from "vscode-chokidar";
-import Commons from "../commons";
-import { Environment } from "../environmentPath";
 import localize from "../localize";
 import lockfile from "../lockfile";
-import { CustomSettings } from "../setting";
+import { CustomConfig } from "../models/customConfig.model";
+import { state } from "../state";
 import { Util } from "../util";
-import { FileService } from "./fileService";
+import { FileService } from "./file.service";
 
 export class AutoUploadService {
-  public static GetIgnoredItems(customSettings: CustomSettings) {
+  public static GetIgnoredItems(customSettings: CustomConfig) {
     return [
       ...customSettings.ignoreUploadFolders.map(folder => `**/${folder}/**`),
       ...customSettings.ignoreUploadFiles.map(file => `**/${file}`)
@@ -18,27 +17,25 @@ export class AutoUploadService {
 
   public watching = false;
 
-  private watcher = watch(this.options.en.USER_FOLDER, {
+  private watcher = watch(state.environment.USER_FOLDER, {
     depth: 2,
-    ignored: this.options.ignored
+    ignored: this.ignored
   });
 
-  constructor(
-    private options: { en: Environment; commons: Commons; ignored: string[] }
-  ) {
+  constructor(private ignored: string[]) {
     vscode.extensions.onDidChange(async () => {
-      if (this.watching) {
+      if (this.watching && vscode.window.state.focused) {
         console.log("Sync: Extensions changed");
-        if (await lockfile.Check(this.options.en.FILE_SYNC_LOCK)) {
+        if (await lockfile.Check(state.environment.FILE_SYNC_LOCK)) {
           return;
         } else {
-          await lockfile.Lock(this.options.en.FILE_SYNC_LOCK);
+          await lockfile.Lock(state.environment.FILE_SYNC_LOCK);
         }
-        const customSettings: CustomSettings = await this.options.commons.GetCustomSettings();
-        if (customSettings) {
+        const customConfig = await state.commons.GetCustomSettings();
+        if (!customConfig.downloadPublicGist) {
           await this.InitiateAutoUpload();
         }
-        await lockfile.Unlock(this.options.en.FILE_SYNC_LOCK);
+        await lockfile.Unlock(state.environment.FILE_SYNC_LOCK);
         return;
       }
     });
@@ -50,24 +47,27 @@ export class AutoUploadService {
     this.watching = true;
 
     this.watcher.addListener("change", async (path: string) => {
-      if (this.watching) {
+      if (this.watching && vscode.window.state.focused) {
         console.log(`Sync: ${FileService.ExtractFileName(path)} changed`);
-        if (await lockfile.Check(this.options.en.FILE_SYNC_LOCK)) {
+        if (await lockfile.Check(state.environment.FILE_SYNC_LOCK)) {
           return;
         } else {
-          await lockfile.Lock(this.options.en.FILE_SYNC_LOCK);
+          await lockfile.Lock(state.environment.FILE_SYNC_LOCK);
         }
 
-        const customSettings: CustomSettings = await this.options.commons.GetCustomSettings();
-        if (customSettings) {
+        const customConfig = await state.commons.GetCustomSettings();
+        if (customConfig) {
           const fileType: string = path
             .substring(path.lastIndexOf("."), path.length)
             .slice(1);
-          if (customSettings.supportedFileExtensions.indexOf(fileType) !== -1) {
+          if (
+            customConfig.supportedFileExtensions.includes(fileType) &&
+            !customConfig.downloadPublicGist
+          ) {
             await this.InitiateAutoUpload();
           }
         }
-        await lockfile.Unlock(this.options.en.FILE_SYNC_LOCK);
+        await lockfile.Unlock(state.environment.FILE_SYNC_LOCK);
         return;
       }
     });
@@ -81,13 +81,18 @@ export class AutoUploadService {
   }
 
   private async InitiateAutoUpload() {
+    const customSettings = await state.commons.GetCustomSettings();
+
     vscode.window.setStatusBarMessage("").dispose();
     vscode.window.setStatusBarMessage(
-      localize("common.info.initAutoUpload"),
+      localize("common.info.initAutoUpload").replace(
+        "{0}",
+        customSettings.autoUploadDelay
+      ),
       5000
     );
 
-    await Util.Sleep(5000);
+    await Util.Sleep(customSettings.autoUploadDelay * 1000);
 
     vscode.commands.executeCommand("extension.updateSettings", "forceUpdate");
   }

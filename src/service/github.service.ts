@@ -3,12 +3,18 @@
 import * as GitHubApi from "@octokit/rest";
 import * as HttpsProxyAgent from "https-proxy-agent";
 import * as vscode from "vscode";
-import { File } from "./fileService";
+import Commons from "../commons";
+import { state } from "../state";
+import { File } from "./file.service";
 
 interface IEnv {
   [key: string]: string | undefined;
   http_proxy: string;
   HTTP_PROXY: string;
+}
+
+interface IFixGistResponse extends Omit<GitHubApi.GistsGetResponse, "files"> {
+  files: any | GitHubApi.GistsGetResponseFiles;
 }
 
 export class GitHubService {
@@ -120,8 +126,37 @@ export class GitHubService {
     }
   }
 
-  public async ReadGist(GIST: string): Promise<any> {
-    return await this.github.gists.get({ gist_id: GIST });
+  // This should return GitHubApi.Response<GitHubApi.GistsGetResponse> but Types are wrong
+  public async ReadGist(
+    GIST: string
+  ): Promise<GitHubApi.Response<IFixGistResponse>> {
+    const promise = this.github.gists.get({ gist_id: GIST });
+    const res = await promise.catch(err => {
+      if (String(err).includes("HttpError: Not Found")) {
+        return Commons.LogException(err, "Sync: Invalid Gist ID", true);
+      }
+      Commons.LogException(err, state.commons.ERROR_MESSAGE, true);
+    });
+    if (res) {
+      return res;
+    }
+  }
+
+  public async IsGistNewer(
+    GIST: string,
+    localLastUpload: Date
+  ): Promise<boolean> {
+    const gist = await this.ReadGist(GIST);
+    if (!gist) {
+      return;
+    }
+    const gistLastUpload = new Date(
+      JSON.parse(gist.data.files.cloudSettings.content).lastUpload
+    );
+    if (!localLastUpload) {
+      return false;
+    }
+    return gistLastUpload > localLastUpload;
   }
 
   public UpdateGIST(gistObject: any, files: File[]): any {
@@ -146,7 +181,17 @@ export class GitHubService {
 
   public async SaveGIST(gistObject: any): Promise<boolean> {
     gistObject.gist_id = gistObject.id;
-    await this.github.gists.update(gistObject);
-    return true;
+    const promise = this.github.gists.update(gistObject);
+
+    const res = await promise.catch(err => {
+      if (String(err).includes("HttpError: Not Found")) {
+        return Commons.LogException(err, "Sync: Invalid Gist ID", true);
+      }
+      Commons.LogException(err, state.commons.ERROR_MESSAGE, true);
+    });
+
+    if (res) {
+      return true;
+    }
   }
 }

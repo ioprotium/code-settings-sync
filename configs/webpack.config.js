@@ -1,11 +1,13 @@
 "use strict";
 
 const path = require("path");
-const CleanWebpackPlugin = require("clean-webpack-plugin").default;
-const webpack = require("webpack");
+const { CleanWebpackPlugin } = require("clean-webpack-plugin");
 
 /** @type WebpackOptions */
 const config = {
+  stats: {
+    warningsFilter: /Critical dependency: the request of a dependency is an expression/
+  },
   target: "node",
   entry: "./src/extension.ts",
   output: {
@@ -17,7 +19,10 @@ const config = {
   resolve: {
     extensions: [".ts", ".js"],
     alias: {
-      deepmerge$: path.resolve(__dirname, "../node_modules/deepmerge/dist/umd.js")
+      deepmerge$: path.resolve(
+        __dirname,
+        "../node_modules/deepmerge/dist/umd.js"
+      )
     }
   },
   module: {
